@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environments
+env/
+venv/
+.venv/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Large competition datasets (DO NOT COMMIT GIGABYTES TO GIT)
+dataset/
+**/dataset/
+scratch/
+**/scratch/
+partitions/
+**/partitions/
+
+# Large generated data files & submission archives (>100MB exceeds GitHub limits)
+*.tsv
+*.zip
+*.tar.gz
+*.log
