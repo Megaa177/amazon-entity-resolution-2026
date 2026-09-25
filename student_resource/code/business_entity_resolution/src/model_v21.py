@@ -47,6 +47,9 @@ def triangulate_siblings(
             elif p >= sub_threshold_min:
                 s3_sub.append((cid, p))
                 
+    if (not s2_high or not s3_sub) and (not s3_high or not s2_sub):
+        return candidates
+        
     boosted = dict(candidates)
     
     # 1. Promote S3 candidate if S2 is highly confident and they share digits or name

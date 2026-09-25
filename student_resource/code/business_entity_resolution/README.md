@@ -6,17 +6,22 @@ This package contains the self-contained, end-to-end entity resolution pipeline 
 
 ## 1. System Overview & Architecture
 
-The solution uses a high-performance two-stage entity resolution architecture:
-1. **Dynamic Country-Partitioned Multi-Index Candidate Generation (Blocking)**:
-   - Partitions search space by country (`US`, `India`, `France`).
-   - Multi-key indexing using exact standardized name, token bigrams, rare distinctive tokens, address building numbers, and postal codes.
-   - Frequency pruning to discard generic tokens and keep candidate sets tight ($\le 15$ per S1 entity).
-2. **Dense Feature Engineering**:
-   - Computes 14 discriminative lexical, token-overlap, address-component, prefix, and source-interaction signals for each pair.
-3. **Calibrated Gradient Boosted Trees (XGBoost)**:
-   - Evaluates pairwise candidate matches.
-   - Optimizes probability decision threshold $\tau^*$ strictly against the competition's macro-averaged $F_{0.5}$ formula.
-   - Built-in singleton preservation layer that outputs an empty match set when candidate confidence falls below $\tau^*$, protecting the critical $1.0$ score on singletons.
+The repository contains two production pipelines:
+
+### Version 2.0 (High-Precision Macro $F_{0.5}$ Baseline)
+- **Candidate Recall**: 88.3%+ with multi-channel inverted indexing (`src/blocking.py`).
+- **Feature Set**: 20 dense similarity features (`src/features.py`).
+- **Model**: Cost-sensitive XGBoost (`src/model_v2.joblib`) with 3-tier threshold filtering ($\tau^* = 0.70$, $\tau_{\text{single}} = 0.75$, $\Delta = 0.15$).
+- **Conflict Resolution**: Global bipartite mutual exclusivity ensuring each target record matches at most one Source 1 entity (0 duplicate collisions).
+- **Validation Macro $F_{0.5}$**: **0.9157 (91.6%)**.
+
+### Version 2.1 (Advanced Multi-Country Resolution Engine)
+- **Candidate Recall**: **90.35%** recall with precomputed logarithmic IDF damping across buckets up to 350 items (`src/blocking_v21.py`).
+- **Feature Set**: 25 dense signals including pure street words Jaccard, character 2-gram Dice, token coverage, and first-token matching (`src/features_v21.py`).
+- **Model**: Cost-sensitive GBDT (`src/model_v21.joblib`) with $\tau^* = 0.720$, $\tau_{\text{single}} = 0.740$, $\Delta = 0.180$.
+- **S2 $\leftrightarrow$ S3 Sibling Triangulation**: Automatically promotes true sibling pairs sharing house numbers and distinctive tokens that fall slightly below single-candidate thresholds.
+- **Anti-Stealing Ambiguity Rejection**: Rejects contested target candidates where competing claims are within $\delta < 0.05$, aggressively shielding precision against catastrophic $F_{0.5}$ penalties.
+- **Validation Macro $F_{0.5}$**: **0.9344 (93.44%)**.
 
 ---
 
@@ -25,15 +30,20 @@ The solution uses a high-performance two-stage entity resolution architecture:
 ```
 business_entity_resolution/
 ├── src/
-│   ├── preprocessing.py    # Multilingual text cleaning, suffix stripping, address parsing
-│   ├── blocking.py         # Multi-channel candidate blocker & inverted index
-│   ├── features.py         # Pairwise similarity feature extractor
-│   ├── model.py            # XGBoost classifier & macro F0.5 threshold optimizer
-│   ├── evaluate.py         # Competition Macro F0.5 evaluation metric implementation
-│   ├── pipeline.py         # End-to-end training and inference pipeline
-│   └── model.joblib        # Pre-trained optimized model checkpoint
-├── README.md               # Reproduction guide
-└── requirements.txt        # Pinned dependencies
+│   ├── preprocessing.py         # Multilingual text cleaning, suffix stripping, address parsing
+│   ├── blocking.py              # Version 2.0 Multi-channel candidate blocker
+│   ├── blocking_v21.py          # Version 2.1 IDF-damped candidate blocker
+│   ├── features.py              # Version 2.0 20-feature extractor
+│   ├── features_v21.py          # Version 2.1 25-feature extractor
+│   ├── model.py                 # Version 2.0 GBDT classifier & threshold tuner
+│   ├── model_v21.py             # Version 2.1 GBDT, sibling triangulation & anti-stealing
+│   ├── model_v2.joblib          # Version 2.0 trained model checkpoint
+│   ├── model_v21.joblib         # Version 2.1 trained model checkpoint
+│   ├── fast_inference.py        # Version 2.0 multi-country streaming inference
+│   ├── fast_inference_v21.py    # Version 2.1 multi-country streaming inference
+│   └── evaluate.py              # Competition Macro F0.5 evaluation metric implementation
+├── README.md                    # Reproduction guide
+└── requirements.txt             # Pinned dependencies
 ```
 
 ---
@@ -49,27 +59,23 @@ pip install -r requirements.txt
 
 ## 4. How to Reproduce
 
-### Step 1: Model Training & Threshold Optimization
-To train the XGBoost classifier from ground truth data and optimize the $F_{0.5}$ threshold:
+### Run Version 2.1 Inference (Recommended, Validation F0.5: 0.9344)
 ```bash
-python src/pipeline.py --mode train --train-dir ../../dataset/train --sample-gt 15000
+python src/fast_inference_v21.py \
+    --output_match ../../output/matching_results_v21.tsv \
+    --output_cand ../../output/candidate_pairs_v21.tsv
 ```
-This fits the model, performs grouped validation, finds the optimal threshold $\tau^* = 0.725$ (achieving ~0.895 validation Macro $F_{0.5}$), and saves `model.joblib`.
 
-### Step 2: Test Inference & File Generation
-To run candidate generation and model scoring over the test dataset:
+### Run Version 2.0 Inference (Baseline, Validation F0.5: 0.9157)
 ```bash
-python src/pipeline.py --mode predict --test-dir ../../dataset/test --output-dir ../../output
+python src/fast_inference.py
 ```
-This generates the two required output files:
-- `output/matching_results.tsv` (Leaderboard submission file)
-- `output/candidate_pairs.tsv` (Blocking candidate pairs)
 
-### Step 3: Submission Format Validation
-Run the official challenge validator from `student_resource/`:
+### Official Submission Format Validation
+Run the official competition validator:
 ```bash
-python utils/validate_submission.py \
-    --matching output/matching_results.tsv \
-    --candidate output/candidate_pairs.tsv \
-    --test-dir dataset/test
+python ../../utils/validate_submission.py \
+    --matching ../../output/matching_results_v21.tsv \
+    --candidate ../../output/candidate_pairs_v21.tsv \
+    --test-dir ../../dataset/test
 ```

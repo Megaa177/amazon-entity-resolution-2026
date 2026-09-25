@@ -42,19 +42,20 @@ BASE_KEY_WEIGHTS = {
 
 
 class CandidateBlockerV21:
-    """Version 2.1 Candidate Blocker with IDF frequency damping and robust address tokenization.
+    """Version 2.1 Candidate Blocker with precomputed IDF frequency damping and robust address tokenization.
     
     Key upgrades over v2.0:
     1. Hyphen & slash normalization for street names (prevents hyphenated house numbers polluting street words).
-    2. Non-destructive bucket management: Keeps buckets up to 1,500 candidates with logarithmic IDF penalty.
-    3. Unified street address blocking channels.
+    2. Balanced bucket management: Keeps buckets up to 350 candidates with logarithmic IDF penalty.
+    3. Precomputed IDF weights for high throughput during multi-country inference.
     4. Phone and registration code blocking channels.
     """
 
-    def __init__(self, max_candidates_per_entity: int = 18, max_bucket_size: int = 1500):
+    def __init__(self, max_candidates_per_entity: int = 18, max_bucket_size: int = 350):
         self.max_candidates = max_candidates_per_entity
         self.max_bucket_size = max_bucket_size
         self.index = defaultdict(list)
+        self.key_weights = {}
         self.target_records = {}
 
     def extract_blocking_keys(self, record: dict) -> list[tuple[str, str]]:
@@ -123,6 +124,16 @@ class CandidateBlockerV21:
 
         return keys
 
+    def precompute_weights(self):
+        """Precompute logarithmic IDF weights for all indexed keys."""
+        self.key_weights.clear()
+        log_max = math.log(self.max_bucket_size + 1)
+        for k, bucket in self.index.items():
+            base_w = BASE_KEY_WEIGHTS.get(k[0], 1.0)
+            b_len = len(bucket)
+            idf = max(0.20, 1.0 - (math.log(b_len) / log_max))
+            self.key_weights[k] = base_w * idf
+
     def fit_targets(self, records: list[dict]):
         """Index target records (from Source 2 and Source 3)."""
         self.index.clear()
@@ -140,25 +151,20 @@ class CandidateBlockerV21:
         for k in pruned_keys:
             del self.index[k]
 
+        self.precompute_weights()
+
     def get_candidates(self, query_rec: dict) -> list[str]:
-        """Retrieve top candidate entity IDs for an S1 record with IDF damping."""
+        """Retrieve top candidate entity IDs for an S1 record with precomputed IDF damping."""
         keys = self.extract_blocking_keys(query_rec)
         score_map = defaultdict(float)
         
         for k in keys:
-            k_type = k[0]
-            base_w = BASE_KEY_WEIGHTS.get(k_type, 1.0)
             bucket = self.index.get(k)
             if not bucket:
                 continue
-            
-            b_len = len(bucket)
-            # Logarithmic IDF dampening: frequent terms carry diminished weight
-            idf_factor = max(0.15, 1.0 - (math.log(b_len) / math.log(self.max_bucket_size + 1)))
-            effective_w = base_w * idf_factor
-            
+            w = self.key_weights.get(k, 1.0)
             for cand_id in bucket:
-                score_map[cand_id] += effective_w
+                score_map[cand_id] += w
                 
         if not score_map:
             return []

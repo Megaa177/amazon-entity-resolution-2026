@@ -170,14 +170,18 @@ def compute_pair_features_v21(
     token_overlap_ratio = (len(set_tok1 & set_tok2) / len(set_tok1)) if set_tok1 else 0.0
     
     # 21. Street Words Jaccard (Pure alphabetic street names, excluding numbers and noise)
-    st_words1 = [
-        w for w in re.findall(r'[a-z]+', c_addr1) 
-        if len(w) >= 3 and w not in GENERIC_STREET_WORDS
-    ]
-    st_words2 = [
-        w for w in re.findall(r'[a-z]+', c_addr2) 
-        if len(w) >= 3 and w not in GENERIC_STREET_WORDS
-    ]
+    st_words1 = s1_rec.get('street_words')
+    if st_words1 is None:
+        st_words1 = [
+            w for w in re.findall(r'[a-z]+', c_addr1) 
+            if len(w) >= 3 and w not in GENERIC_STREET_WORDS
+        ]
+    st_words2 = cand_rec.get('street_words')
+    if st_words2 is None:
+        st_words2 = [
+            w for w in re.findall(r'[a-z]+', c_addr2) 
+            if len(w) >= 3 and w not in GENERIC_STREET_WORDS
+        ]
     street_words_jaccard = fast_jaccard(st_words1, st_words2)
     
     # 22. First Token Exact Match (strong anchor for corporate names)

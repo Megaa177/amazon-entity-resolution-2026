@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import re
 import argparse
 import joblib
 import numpy as np
@@ -15,7 +16,7 @@ try:
         extract_postal_code,
         extract_complex_codes
     )
-    from .blocking_v21 import CandidateBlockerV21
+    from .blocking_v21 import CandidateBlockerV21, GENERIC_STREET_WORDS
     from .features_v21 import compute_pair_features_v21
     from .model_v21 import MatchClassifierV21, resolve_mutual_exclusivity_v21, triangulate_siblings
 except ImportError:
@@ -27,7 +28,7 @@ except ImportError:
         extract_postal_code,
         extract_complex_codes
     )
-    from blocking_v21 import CandidateBlockerV21
+    from blocking_v21 import CandidateBlockerV21, GENERIC_STREET_WORDS
     from features_v21 import compute_pair_features_v21
     from model_v21 import MatchClassifierV21, resolve_mutual_exclusivity_v21, triangulate_siblings
 
@@ -95,6 +96,11 @@ def ensure_partitions(test_dir: str, part_dir: str):
 def create_record(eid: str, raw_name: str, raw_addr: str, country: str) -> dict:
     c_name = clean_business_name(raw_name)
     c_addr = clean_address(raw_addr)
+    norm_addr = re.sub(r'[-/]', ' ', c_addr)
+    st_words = [
+        w for w in re.findall(r'[a-z]+', norm_addr) 
+        if len(w) >= 3 and w not in GENERIC_STREET_WORDS
+    ]
     return {
         'entity_id': eid,
         'country': country,
@@ -104,7 +110,8 @@ def create_record(eid: str, raw_name: str, raw_addr: str, country: str) -> dict:
         'clean_addr': c_addr,
         'addr_digits': extract_address_digits(raw_addr),
         'complex_codes': extract_complex_codes(c_addr),
-        'postal_code': extract_postal_code(raw_addr, country)
+        'postal_code': extract_postal_code(raw_addr, country),
+        'street_words': st_words
     }
 
 
@@ -135,7 +142,7 @@ def process_country_v21(country: str, part_dir: str, clf_data: dict, out_match_p
     needed_keys = set()
     s1_keys_map = {}
     
-    blocker = CandidateBlockerV21(max_candidates_per_entity=18, max_bucket_size=1500)
+    blocker = CandidateBlockerV21(max_candidates_per_entity=18, max_bucket_size=350)
     
     with open(s1_path, encoding='utf-8') as f:
         for line in f:
@@ -177,6 +184,7 @@ def process_country_v21(country: str, part_dir: str, clf_data: dict, out_match_p
     for k in pruned:
         del blocker.index[k]
         
+    blocker.precompute_weights()
     print(f"Indexed {len(target_records):,} target records in {time.time()-t_idx:.1f}s.")
     
     # 3. Batched ML Feature Extraction and Inference
@@ -216,8 +224,9 @@ def process_country_v21(country: str, part_dir: str, clf_data: dict, out_match_p
                 
         if len(batch_features) >= BATCH_SIZE:
             flush_batch()
-            if (idx + 1) % 50000 == 0:
-                print(f"  Processed {idx+1:,} / {len(s1_records):,} S1 entities... ({total_pairs_scored:,} pairs scored)")
+            
+        if (idx + 1) % 50000 == 0 or (idx + 1) == len(s1_records):
+            print(f"  Scored {idx+1:,} / {len(s1_records):,} S1 entities... ({total_pairs_scored:,} pairs scored in {time.time()-t_score:.1f}s)", flush=True)
                 
     flush_batch()
     print(f"Finished scoring {total_pairs_scored:,} candidate pairs in {time.time()-t_score:.1f}s.")
