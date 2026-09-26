@@ -31,3 +31,5 @@ partitions/
 *.zip
 *.tar.gz
 *.log
+catboost_info/
+**/catboost_info/
